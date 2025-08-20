@@ -20,8 +20,7 @@ os.makedirs("tmp_TileBuilderMonitor",exist_ok=True)
 
 paramsNeeded = ["TECHNO_NAME","FLOW_DIR","TB_SRV_DIR"]
 
-
-#The monitor class will hold all run details , it will be the entirety of the program 
+#The monitor class will hold all run details , it will be the entirety of the program , For Gui I plan to add a gui method 
 #We currently have a basic structure in place, but it needs to be expanded with more functionality and edgecases
 #such as seeing synced flowdir and pdk as techdir
 #I also want to organize the initialization
@@ -42,7 +41,6 @@ paramsNeeded = ["TECHNO_NAME","FLOW_DIR","TB_SRV_DIR"]
 #i would rather create all workspaces first and then create the runs so we dont have two copies of the same list with one outdated . 
 #This means i can create all run objects in a workpsace method in its init and then get statuses also in the init of workspace .
 
-
 class Monitor():
     
     def __init__(self):
@@ -61,8 +59,7 @@ class Monitor():
             print("printenv command failed:", e.stderr.strip())
             exit(1)
 
-    def getAllRuns(self):
-        
+    def getAllRuns(self): 
         user = self.User
         if not os.path.exists(currentUsers_path):
             print("File not found.")
@@ -75,7 +72,6 @@ class Monitor():
                          self.validRuns.append(Run(data))
                 print(f"\nFound {len(self.validRuns)} Run Areas found for user: {user}\n")
                 
-    
     def getWorkSpaces(self):
         print("Getting workspaces...")
         # Build mapping from FLOW_DIR to WorkSpace
@@ -94,19 +90,18 @@ class Monitor():
         self.validWorkSpaces = list(workspace_map.values())
 
         with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor: # multithreading this thing takes 100s now down to 40s
-            futures = [executor.submit(workspace.getStatus) for workspace in self.validWorkSpaces]
-            for future in as_completed(futures):
-                future.result()
+            future_workspace = {executor.submit(workspace.getStatus): workspace.FLOW_DIR for workspace in self.validWorkSpaces}
+            for future in as_completed(future_workspace):
+                for workspace in self.validWorkSpaces:
+                    if workspace.FLOW_DIR in future_workspace[future]:
+                        workspace.validRuns = future.result()
 
     def WriteToJson(self):
         print("Writing to Json")
         with open("tmp_TileBuilderMonitor/tmp.json", 'w') as file:
             for workspace in self.validWorkSpaces:
                 for run in workspace.validRuns:
-                    if run.validityFlag:
-                        file.write(json.dumps(run.dictionary, indent=4))
-                    
-
+                    file.write(json.dumps(run.dictionary, indent=4))
 
 class WorkSpace():
         def __init__(self, flow_dir):
@@ -122,7 +117,7 @@ class WorkSpace():
         def getStatus (self) : # getting status of runs ( failed and running targets)
             print(f"Getting status for FLOW_DIR: {self.FLOW_DIR}")
             run_map = {run.dictionary["basedir"].split("/")[-1]: run for run in self.validRuns if "basedir" in run.dictionary}
-            if self.validRuns and self.validRuns[0]:
+            if self.validRuns and self.validRuns[0]: # to clean flag 
                 if "TB_SRV_DIR" in self.validRuns[0].dictionary:
                     for status in ["RUNNING", "FAILED"]:
                         cmd = f"source {self.validRuns[0].dictionary['TB_SRV_DIR']}/.cshrc; serascmd -find_jobs 'status=={status}' -report 'name dir'"
@@ -137,7 +132,7 @@ class WorkSpace():
                             if len(parts) == 2: # for some reason if line is not the format we are expecting , dont process it . 
                                 basedir_split = parts[1].split("/")[-1]
                                 target = parts[0]
-                                if basedir_split in run_map:
+                                if basedir_split in run_map: # write else statement 
                                     ansi_escape = re.compile(
                                     r'(?:\x1B[@-_][0-?]*[ -/]*[@-~])'  # ANSI CSI sequences
                                     r'|(?:\x1B\][^\x07]*\x07)'         # OSC sequences
@@ -147,10 +142,13 @@ class WorkSpace():
                                     clean_target = ansi_escape.sub('', target)
                                     if status == "RUNNING":
                                         run_map[basedir_split].dictionary["RUNNING_TARGETS"].append(clean_target)
+                                        
                                     elif status == "FAILED":
                                         run_map[basedir_split].dictionary["FAILED_TARGETS"].append(clean_target)
+                                        
 
                     self.validRuns = list(run_map.values())
+                    return self.validRuns
 
                 else:
                     print(f"Failed to get status for: {self.FLOW_DIR}")
@@ -175,33 +173,23 @@ class Run():
                 params = json.load(params_file)
 
                 for parameter in paramsNeeded:
-                        self.dictionary[parameter] = params["params"][parameter]
+                    self.dictionary[parameter] = params["params"][parameter]
 
                 self.dictionary["RUNNING_TARGETS"] = []
                 self.dictionary["FAILED_TARGETS"] = []    
         except FileNotFoundError:
             print(f"File not found: {params_path}")
-            self.validityFlag = False
-    
+            self.validityFlag = False   
 
 def main():
 
-
    TileBuilderMonitor = Monitor()
-   
-   TileBuilderMonitor.WriteToJson()
-
-
-
-    
+   TileBuilderMonitor.WriteToJson()    
 
 if __name__ == "__main__":
     main()
 
-
-
-
-
 # changs to make , get flowdir from p4 rather than json 
 # get techno from pdk dir path 
 # run faster please 
+
