@@ -145,7 +145,7 @@ class WorkSpace():
             run_map = {run.dictionary["basedir"].split("/")[-1]: run for run in self.validRuns if "basedir" in run.dictionary}
             if self.validRuns and self.validRuns[0]: # to clean flag 
                 if "TB_SRV_DIR" in self.validRuns[0].dictionary:
-                    for status in ["RUNNING", "FAILED"]:
+                    for status in ["RUNNING", "FAILED", "WAIVED"]:
                         cmd = f"source {self.validRuns[0].dictionary['TB_SRV_DIR']}/.cshrc; serascmd -find_jobs 'status=={status}' -report 'name dir'"
                         result = subprocess.run(['tcsh', '-c', cmd], text=True, capture_output=True)
                         for line in result.stdout.splitlines():
@@ -169,7 +169,7 @@ class WorkSpace():
                                     if status == "RUNNING":
                                         run_map[basedir_split].dictionary["RUNNING_TARGETS"].append(clean_target)
                                         
-                                    elif status == "FAILED":
+                                    elif status == "FAILED" or status == "WAIVED":
                                         run_map[basedir_split].dictionary["FAILED_TARGETS"].append(clean_target)
                                         
 
