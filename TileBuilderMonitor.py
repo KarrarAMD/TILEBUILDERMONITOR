@@ -11,6 +11,8 @@ import os
 import re
 import time
 from tkinter.tix import STATUS
+import tkinter as tk
+from tkinter import ttk
 from unittest import result
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
  
@@ -102,6 +104,30 @@ class Monitor():
             for workspace in self.validWorkSpaces:
                 for run in workspace.validRuns:
                     file.write(json.dumps(run.dictionary, indent=4))
+    
+      # ...existing code...
+
+    def show_gui(self):
+        root = tk.Tk()
+        root.title("TileBuilderMonitor Workspaces")
+
+        tree = ttk.Treeview(root)
+        tree["columns"] = ("Running Targets", "Failed Targets")
+        tree.heading("#0", text="FLOW_DIR / Run")
+        tree.heading("Running Targets", text="Running Targets")
+        tree.heading("Failed Targets", text="Failed Targets")
+
+        for workspace in self.validWorkSpaces:
+            ws_id = tree.insert("", "end", text=workspace.FLOW_DIR)
+            for run in workspace.validRuns:
+                running = ", ".join(run.dictionary.get("RUNNING_TARGETS", []))
+                failed = ", ".join(run.dictionary.get("FAILED_TARGETS", []))
+                run_name = run.dictionary.get("basedir", "N/A")
+                tree.insert(ws_id, "end", text=run_name, values=(running, failed))
+
+        tree.pack(expand=True, fill="both")
+        root.mainloop()
+# ...existing code...
 
 class WorkSpace():
         def __init__(self, flow_dir):
@@ -184,8 +210,9 @@ class Run():
 def main():
 
    TileBuilderMonitor = Monitor()
-   TileBuilderMonitor.WriteToJson()    
-
+   TileBuilderMonitor.WriteToJson()
+   TileBuilderMonitor.show_gui()
+   
 if __name__ == "__main__":
     main()
 
