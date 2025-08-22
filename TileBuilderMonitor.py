@@ -19,7 +19,7 @@ currentUsers_path = "/tool/aticad/1.0/flow/current_users.json"
 os.makedirs("tmp_TileBuilderMonitor",exist_ok=True)
 
 paramsNeeded = ["TECHNO_NAME","FLOW_DIR","TB_SRV_DIR"]
-
+print("this is a test...")
 #The monitor class will hold all run details , it will be the entirety of the program , For Gui I plan to add a gui method 
 #We currently have a basic structure in place, but it needs to be expanded with more functionality and edgecases
 #such as seeing synced flowdir and pdk as techdir
