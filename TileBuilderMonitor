@@ -1,0 +1,30 @@
+#!/bin/tcsh
+
+# Resolve absolute path to this script (handle ./ and symlinks)
+set script = "$0"
+if ( "$script" !~ /* ) then
+	set script = "$cwd/$script"
+endif
+if ( -x "/usr/bin/readlink" ) then
+	set script = `readlink -f "$script"`
+else if ( -x "/usr/bin/realpath" ) then
+	set script = `realpath "$script"`
+endif
+set script_dir = `dirname "$script"`
+cd "$script_dir" || exit 1
+
+# echo "$script_dir"
+
+# Ensure $prompt exists to avoid 'Undefined variable' inside activate.csh
+if ( $?prompt == 0 ) then
+	set prompt = ""
+endif
+# Avoid prompt modifications while still activating paths
+setenv VIRTUAL_ENV_DISABLE_PROMPT 1
+
+source $script_dir/.venv/bin/activate.csh
+
+set python_path = "$script_dir/.venv/bin/python3.11"
+exec "$python_path" "$script_dir/TileBuilderMonitor.py" $argv:q
+
+deactivate
