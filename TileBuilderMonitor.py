@@ -4,6 +4,8 @@ import sys
 import time
 import signal
 import subprocess
+import json
+import argparse
 from pathlib import Path
 
 
@@ -64,12 +66,24 @@ def wait_for_file(path: Path, timeout: float | None = None) -> bool:
         time.sleep(0.2)
 
 
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="TileBuilderMonitor",
+        description="Run TileBuilder Monitor backend and frontend",
+        add_help=True,
+    )
+    parser.add_argument("-u", "--user", dest="user", help="specify the user", default=None)
+    parser.add_argument("-r", "--run", dest="run_dir", help="run area/dir", default=None)
+    return parser.parse_args(argv)
+
+
 def main():
     root = Path(__file__).resolve().parent
     backend = root / "TileBuilderMonitor_backend.py"
     frontend = root / "TileBuilderMonitor_frontend.py"
     out_dir = root / "tmp_TileBuilderMonitor"
     out_file = out_dir / "tmp.json"
+    inputs_file = out_dir / "inputs.json"
 
     # Ensure fresh output directory
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -78,6 +92,18 @@ def main():
             out_file.unlink()
         except Exception:
             pass
+
+    # Parse CLI args and write inputs.json so other tools can discover them
+    args = parse_args(sys.argv[1:])
+    print(f"{args=}")
+    
+    try:
+        payload = {"user": args.user, "run_dir": args.run_dir}
+        # Only include keys with values, or include both? Keep both keys for stability
+        with inputs_file.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as e:
+        print(f"[orchestrator] Failed to write inputs.json: {e}")
 
     print("[orchestrator] Starting backend...")
     rc = run_backend(backend, root)
