@@ -32,17 +32,16 @@ class TileBuilderMonitorApp:
         # Data containers
         # Default to cutting off (no wrapping) unless user switches menu to Wrap
         self.wrap_enabled = False
-        self.records = []
-        self.item_to_records = {}
-        self.right_item_to_record = {}
+        self.records: list[dict] = []
+        self.item_to_records: dict[str, dict | list] = {}
+        self.right_item_to_record: dict[str, dict] = {}
+
+        # Track real Button widgets for Open Xterm column
+        self._open_buttons: dict[str, tk.Button] = {}
 
         # UI build & signals
         self._setup_signals()
         self._build_ui()
-
-        # Open column interaction state
-        self._hover_open_row = None
-        self._pressed_rows = set()
 
         # Load initial data
         self.records = self._load_json_records()
@@ -50,7 +49,6 @@ class TileBuilderMonitorApp:
 
     def _build_ui(self):
         # Menubar with "Display" dropdown
-        # Default selection is now "Cut off"
         self.display_var = tk.StringVar(value="Cut off")
         menubar = tk.Menu(self.root)
         display_menu = tk.Menu(menubar, tearoff=0)
@@ -69,7 +67,7 @@ class TileBuilderMonitorApp:
         menubar.add_cascade(label="Display", menu=display_menu)
         self.root.config(menu=menubar)
 
-        # Main paned layout: left = directories, right = runs table
+        # Main paned layout
         main = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
         main.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=6, pady=6)
 
@@ -82,7 +80,6 @@ class TileBuilderMonitorApp:
         self.left_style_name = "TB.Left.Treeview"
         self.right_style_name = "TB.Right.Treeview"
         self.style = ttk.Style(self.root)
-        # Optional: ensure a theme that honors row background colors
         try:
             self.style.theme_use("clam")
         except tk.TclError:
@@ -91,38 +88,30 @@ class TileBuilderMonitorApp:
         self.style.configure(self.left_style_name, font=self.row_font, rowheight=24)
         self.style.configure(self.right_style_name, font=self.row_font, rowheight=24)
 
-        # LEFT: directories-only tree (no Running/Failed columns here)
+        # LEFT tree
         self.tree_left = ttk.Treeview(
             left_frame,
             columns=(),
-            show="tree",  # only the tree column
+            show="tree",
             height=18,
             style=self.left_style_name,
         )
         self.tree_left.heading("#0", text="Directory")
         self.tree_left.column("#0", width=550, anchor=tk.W)
-
-        # Tag used to highlight FLOW DIRECTORY rows
-        self.tree_left.tag_configure("flow", background="#a0b5cc")  # light blue
-
+        self.tree_left.tag_configure("flow", background="#a0b5cc")
         vsb_l = ttk.Scrollbar(left_frame, orient="vertical", command=self.tree_left.yview)
         hsb_l = ttk.Scrollbar(left_frame, orient="horizontal", command=self.tree_left.xview)
         self.tree_left.configure(yscrollcommand=vsb_l.set, xscrollcommand=hsb_l.set)
-
         self.tree_left.grid(row=0, column=0, sticky="nsew")
         vsb_l.grid(row=0, column=1, sticky="ns")
         hsb_l.grid(row=1, column=0, sticky="ew")
-
         left_frame.rowconfigure(0, weight=1)
         left_frame.columnconfigure(0, weight=1)
-
-        # selection updates right table
         self.tree_left.bind("<<TreeviewSelect>>", self._on_left_select)
-        # open details on double-click/Enter
         self.tree_left.bind("<Double-1>", self._on_left_activate)
         self.tree_left.bind("<Return>", self._on_left_activate)
 
-        # RIGHT: runs table (shows run directories with Running/Failed + Open Xterm action)
+        # RIGHT tree
         columns = ("RUN_DIR", "RUNNING_TARGETS", "FAILED_TARGETS", "OPEN_XTERM")
         self.right_columns = list(columns)
         self.tree_right = ttk.Treeview(
@@ -140,24 +129,25 @@ class TileBuilderMonitorApp:
         self.tree_right.column("RUNNING_TARGETS", width=180, anchor=tk.W)
         self.tree_right.column("FAILED_TARGETS", width=180, anchor=tk.W)
         self.tree_right.column("OPEN_XTERM", width=120, anchor=tk.CENTER, stretch=False)
-
         vsb_r = ttk.Scrollbar(right_frame, orient="vertical", command=self.tree_right.yview)
         hsb_r = ttk.Scrollbar(right_frame, orient="horizontal", command=self.tree_right.xview)
-        self.tree_right.configure(yscrollcommand=vsb_r.set, xscrollcommand=hsb_r.set)
-
+        def _on_right_scroll(*a):
+            vsb_r.set(*a)
+            self._position_open_buttons()
+        self.tree_right.configure(yscrollcommand=_on_right_scroll, xscrollcommand=hsb_r.set)
         self.tree_right.grid(row=0, column=0, sticky="nsew")
         vsb_r.grid(row=0, column=1, sticky="ns")
         hsb_r.grid(row=1, column=0, sticky="ew")
-
         right_frame.rowconfigure(0, weight=1)
         right_frame.columnconfigure(0, weight=1)
-
-        # open details from right table on double-click/Enter
         self.tree_right.bind("<Double-1>", self._on_right_activate)
         self.tree_right.bind("<Return>", self._on_right_activate)
-        # New bindings for launching terminals
-        self.tree_right.bind("<Button-1>", self._on_right_click, add=True)
-        self.tree_right.bind("<Motion>", self._on_right_motion, add=True)
+        self.tree_right.bind("<Configure>", lambda e: self._position_open_buttons())
+        self.tree_right.bind("<Expose>", lambda e: self._position_open_buttons())
+        self.tree_right.bind("<ButtonRelease-1>", lambda e: self._position_open_buttons())
+        self.tree_right.bind("<MouseWheel>", lambda e: self.root.after_idle(self._position_open_buttons))
+        self.tree_right.bind("<Button-4>", lambda e: self.root.after_idle(self._position_open_buttons))
+        self.tree_right.bind("<Button-5>", lambda e: self.root.after_idle(self._position_open_buttons))
 
     def _on_display_change(self, event=None):
         self.wrap_enabled = (self.display_var.get() == "Wrap to new line")
@@ -365,7 +355,7 @@ class TileBuilderMonitorApp:
                 failed_out.count("\n") + 1,
             )
             # Initial Open column label styled like a button
-            row_id = self.tree_right.insert("", "end", values=(run_dir_out, running_out, failed_out, "[ Open ]"))
+            row_id = self.tree_right.insert("", "end", values=(run_dir_out, running_out, failed_out, ""))
             self.right_item_to_record[row_id] = r  # map right row to its record
 
         if self.wrap_enabled:
@@ -373,6 +363,9 @@ class TileBuilderMonitorApp:
             self.style.configure(self.right_style_name, rowheight=max(24, int(max_lines_right * (line_px + 2))))
         else:
             self.style.configure(self.right_style_name, rowheight=24)
+
+        # After populating rows, (re)create buttons
+        self._create_open_buttons()
 
     # NEW: open-details handlers and helpers
     def _on_left_activate(self, event=None):
@@ -447,18 +440,18 @@ class TileBuilderMonitorApp:
         x, y = (sw - w) // 2, (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
 
-        frame = ttk.Frame(win, padding=8)
+        frame = tk.Frame(win, padding=8)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        tree = ttk.Treeview(frame, columns=("ATTRIBUTE", "VALUE"), show="headings", height=20)
+        tree = tk.Treeview(frame, columns=("ATTRIBUTE", "VALUE"), show="headings", height=20)
         tree.heading("ATTRIBUTE", text="Attribute")
         tree.heading("VALUE", text="Value")
         # Initial column widths; user can resize, but we wrap based on these at open time
         tree.column("ATTRIBUTE", width=250, anchor=tk.W)
         tree.column("VALUE", width=800, anchor=tk.W)
 
-        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
-        hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        vsb = tk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        hsb = tk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
         tree.grid(row=0, column=0, sticky="nsew")
@@ -522,80 +515,45 @@ class TileBuilderMonitorApp:
         except Exception as e:
             print(f"[ERROR] Failed to launch terminal for {run_dir}: {e}")
 
-    def _on_right_click(self, event):
-        row_id = self.tree_right.identify_row(event.y)
-        if not row_id:
-            return
-        col = self.tree_right.identify_column(event.x)
-        try:
-            col_index = int(col.lstrip('#')) - 1
-        except ValueError:
-            return
-        if 0 <= col_index < len(self.right_columns) and self.right_columns[col_index] == 'OPEN_XTERM':
+    # --- Real button management for Open Xterm column ---
+    def _create_open_buttons(self):
+        for b in self._open_buttons.values():
+            try:
+                b.destroy()
+            except Exception:
+                pass
+        self._open_buttons.clear()
+        for row_id in self.tree_right.get_children():
             rec = self.right_item_to_record.get(row_id)
-            if isinstance(rec, dict):
-                basedir = rec.get('basedir')
-                self._open_run_term(basedir)
-                # Visual pressed effect
-                self._pressed_rows.add(row_id)
-                self._set_open_label(row_id, 'pressed')
-                # schedule revert after short delay
-                self.root.after(180, lambda rid=row_id: self._end_press(rid))
-                return 'break'
+            if not isinstance(rec, dict):
+                continue
+            basedir = rec.get('basedir')
+            btn = tk.Button(self.tree_right, text="Open", relief=tk.RAISED,
+                            command=lambda d=basedir: self._open_run_term(d))
+            btn.configure(cursor="hand2")
+            self._open_buttons[row_id] = btn
+        self._position_open_buttons()
 
-    def _on_right_motion(self, event):
-        row_id = self.tree_right.identify_row(event.y)
-        col = self.tree_right.identify_column(event.x)
+    def _position_open_buttons(self):
         try:
-            idx = int(col.lstrip('#')) - 1
+            col_index = self.right_columns.index('OPEN_XTERM')
         except ValueError:
-            self.tree_right.config(cursor='')
             return
-        if row_id and 0 <= idx < len(self.right_columns) and self.right_columns[idx] == 'OPEN_XTERM':
-            self.tree_right.config(cursor='hand2')
-            # manage hover label changes
-            if row_id != self._hover_open_row and row_id not in self._pressed_rows:
-                # revert previous hover if any
-                if self._hover_open_row and self._hover_open_row not in self._pressed_rows:
-                    self._set_open_label(self._hover_open_row, 'normal')
-                self._set_open_label(row_id, 'hover')
-                self._hover_open_row = row_id
-        else:
-            self.tree_right.config(cursor='')
-            # leaving hover area
-            if self._hover_open_row and self._hover_open_row not in self._pressed_rows:
-                self._set_open_label(self._hover_open_row, 'normal')
-            self._hover_open_row = None
-
-    # --- Helper methods for Open column button states ---
-    def _set_open_label(self, row_id: str, state: str):
-        try:
-            vals = list(self.tree_right.item(row_id, 'values'))
-            if len(vals) < 4:
-                return
-            if state == 'normal':
-                vals[3] = '[ Open ]'
-                self.tree_right.item(row_id, values=vals, tags=())
-            elif state == 'hover':
-                vals[3] = '[Open]'
-                self.tree_right.item(row_id, values=vals, tags=('open_hover',))
-            elif state == 'pressed':
-                vals[3] = '[OPEN]'
-                self.tree_right.item(row_id, values=vals, tags=('open_pressed',))
-            # configure tags (once only is fine)
-            self.tree_right.tag_configure('open_hover', background='#e2f3ff')
-            self.tree_right.tag_configure('open_pressed', background='#c8e7ff')
-        except Exception:
-            pass
-
-    def _end_press(self, row_id: str):
-        if row_id in self._pressed_rows:
-            self._pressed_rows.discard(row_id)
-        # keep hover style if still hovered
-        if row_id == self._hover_open_row:
-            self._set_open_label(row_id, 'hover')
-        else:
-            self._set_open_label(row_id, 'normal')
+        col_id = self.right_columns[col_index]
+        for row_id, btn in list(self._open_buttons.items()):
+            if not self.tree_right.exists(row_id):
+                try:
+                    btn.destroy()
+                except Exception:
+                    pass
+                self._open_buttons.pop(row_id, None)
+                continue
+            bbox = self.tree_right.bbox(row_id, col_id)
+            if not bbox:
+                btn.place_forget()
+                continue
+            x, y, width, height = bbox
+            btn.place(x=x+2, y=y+2, width=max(10, width-4), height=max(10, height-4))
 
 
 if __name__ == "__main__":
