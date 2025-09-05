@@ -17,14 +17,15 @@ os.makedirs("tmp_TileBuilderMonitor",exist_ok=True)
 
 paramsNeeded = ["TECHNO_NAME","FLOW_DIR","TB_SRV_DIR"]
 
+Verbose = False # for ERRORS and debugging
+
 #The monitor class will hold all run details , it will be the entirety of the program , For Gui I plan to add a gui method 
 #We currently have a basic structure in place, but it needs to be expanded with more functionality and edgecases
 #such as seeing synced flowdir and pdk as techdir
 
-
-# a few changes To propose / add are 
-# use seras cmd for each run dir rather than one flow directory 
-# switch back to threadpool executer 
+# a few changes To propose / add are
+# use seras cmd for each run dir rather than one flow directory
+# switch back to threadpool executor
 
 
 
@@ -85,10 +86,11 @@ class WorkSpace():
         def __init__(self, monitor, flow_dir , workspaceDict):
              self.FLOW_DIR = flow_dir
              self.validRuns= self.getRuns(workspaceDict)
+             self.getStatus()
              print(f"Initialized WorkSpace for FLOW_DIR: {flow_dir}\n\n")
 
         def getRuns(self, workspaceDict):
-                with ProcessPoolExecutor() as executor:
+                with ThreadPoolExecutor() as executor:
                     jobs_submitted = [executor.submit(Run, run_dict, self) for run_dict in workspaceDict[self.FLOW_DIR]]
                     return [job.result() for job in as_completed(jobs_submitted)]
 
@@ -96,6 +98,49 @@ class WorkSpace():
             for run in self.validRuns:
                 #print(f"Run: {run.dictionary['basedir']}\n\n")
                 print(f"Run: {run.dictionary}\n\n")
+
+        def getStatus(self):
+
+            run_map = {run.dictionary["basedir"].split("/")[-1]:run for run in self.validRuns if "basedir" in run.dictionary}
+                
+            if "TB_SRV_DIR" in self.validRuns[0].dictionary:
+                for status in ["RUNNING","FAILED"]:
+                    cmd = f"""
+                    source {self.validRuns[0].dictionary['TB_SRV_DIR']}/.cshrc; 
+                    serascmd -find_jobs 'status=={status} ' -report 'name dir';
+                    """
+                    result = subprocess.run(['tcsh', '-c', cmd], text=True, capture_output=True)
+                    for line in result.stdout.splitlines():
+                        parts = line.split()
+                        if len(parts) == 2:
+                            Target = parts[0]
+                            base_dir = parts[1].split("/")[-1]
+
+                            ansi_escape = re.compile(
+                            r'(?:\x1B[@-_][0-?]*[ -/]*[@-~])'  # ANSI CSI sequences
+                            r'|(?:\x1B\][^\x07]*\x07)'         # OSC sequences
+                            )
+                            # I beleive serascmd is givng me these escape sequences that are visible when Im saving to json
+                            # This is only seen after json.dump() , lowkey makes me want to reformat everything and avoid json
+                            Target = ansi_escape.sub('', Target)
+                            
+                            try:
+                                if status == "RUNNING":
+                                    run_map[base_dir].dictionary["RUNNING_TARGETS"].append(Target)
+                                else:
+                                    run_map[base_dir].dictionary["FAILED_TARGETS"].append(Target)
+                            except KeyError:
+                                if Verbose:
+                                    print(f"KeyError: {base_dir} not found in run_map")  # Runs that don't share the same flowdir are sometimes technically in the same workspace , for example if we use --newflow when branching 
+                                    print(f"Available keys: {list(run_map.keys())}") # these runs will show up when using seras cmd for that workspace , but we dont have them in our run_map as theya re different flowdirs so this causes a keyerror
+                                continue
+
+
+                self.validRuns = list(run_map.values())
+                return self.validRuns
+
+            else:
+                print(f"TB_SRV_DIR not found in dictionary for: {self.dictionary['basedir']}")        
   
 class Run():
     def __init__(self,json,workSpace):
@@ -104,14 +149,16 @@ class Run():
         self.ACTIVE = False
         self.ERROR = False
         self.getParams()
-        self.getTargets()
+        # self.getTargets()
+        self.dictionary["RUNNING_TARGETS"] = []
+        self.dictionary["FAILED_TARGETS"] = []
 
     def getParams(self):
         try:
             params_path = os.path.join(self.dictionary["basedir"], "params.json")
+            
             with open(params_path, 'r') as params_file:
                 params = json.load(params_file)
-
                 for parameter in paramsNeeded:
                     self.dictionary[parameter] = params["params"][parameter]
 
@@ -120,34 +167,34 @@ class Run():
             print(f"File not found: {params_path}")
             self.validityFlag = False   
 
-    def getTargets(self):
-        self.dictionary["RUNNING_TARGETS"] = []
-        self.dictionary["FAILED_TARGETS"] = []
-        status_flag = True
-        dir = self.dictionary["basedir"].split("/")[-1]
-        if "TB_SRV_DIR" in self.dictionary:
-            for status in ["RUNNING","FAILED"]:
-                cmd = f"""
-                source {self.dictionary['TB_SRV_DIR']}/.cshrc; 
-                serascmd -find_jobs 'status=={status} dir=~{dir}' -report 'name dir';
-                """
-                result = subprocess.run(['tcsh', '-c', cmd], text=True, capture_output=True)
-                for line in result.stdout.splitlines():
-                    if len(line.split()) == 2:
-                        ansi_escape = re.compile(
-                        r'(?:\x1B[@-_][0-?]*[ -/]*[@-~])'  # ANSI CSI sequences
-                        r'|(?:\x1B\][^\x07]*\x07)'         # OSC sequences
-                        )
-                        # I beleive serascmd is givng me these escape sequences that are visible when Im saving to json
-                        # This is only seen after json.dump() , lowkey makes me want to reformat everything and avoid json
-                        line = ansi_escape.sub('', line)
-                        if status == "RUNNING":
-                            self.dictionary["RUNNING_TARGETS"].append(line.split()[0])
-                        else:
-                            self.dictionary["FAILED_TARGETS"].append(line.split()[0])
+    # def getTargets(self):
+    #     self.dictionary["RUNNING_TARGETS"] = []
+    #     self.dictionary["FAILED_TARGETS"] = []
+    #     status_flag = True
+    #     dir = self.dictionary["basedir"].split("/")[-1]
+    #     if "TB_SRV_DIR" in self.dictionary:
+    #         for status in ["RUNNING","FAILED"]:
+    #             cmd = f"""
+    #             source {self.dictionary['TB_SRV_DIR']}/.cshrc; 
+    #             serascmd -find_jobs 'status=={status} dir=~{dir}' -report 'name dir';
+    #             """
+    #             result = subprocess.run(['tcsh', '-c', cmd], text=True, capture_output=True)
+    #             for line in result.stdout.splitlines():
+    #                 if len(line.split()) == 2:
+    #                     ansi_escape = re.compile(
+    #                     r'(?:\x1B[@-_][0-?]*[ -/]*[@-~])'  # ANSI CSI sequences
+    #                     r'|(?:\x1B\][^\x07]*\x07)'         # OSC sequences
+    #                     )
+    #                     # I beleive serascmd is givng me these escape sequences that are visible when Im saving to json
+    #                     # This is only seen after json.dump() , lowkey makes me want to reformat everything and avoid json
+    #                     line = ansi_escape.sub('', line)
+    #                     if status == "RUNNING":
+    #                         self.dictionary["RUNNING_TARGETS"].append(line.split()[0])
+    #                     else:
+    #                         self.dictionary["FAILED_TARGETS"].append(line.split()[0])
 
-        else:
-            print(f"TB_SRV_DIR not found in dictionary for: {self.dictionary['basedir']}")
+    #     else:
+    #         print(f"TB_SRV_DIR not found in dictionary for: {self.dictionary['basedir']}")
 
 
 
