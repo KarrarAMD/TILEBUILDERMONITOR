@@ -49,7 +49,7 @@ class Monitor():
                 
     def getWorkSpaces(self):
         print("Getting workspaces...")
-        workspaceDict = defaultdict(list)
+        workspaceDict = defaultdict(list)   # Needed this to get be able to add keys that dont exist yet , not sure why but it was a COPILOT Fix
         if not os.path.exists(currentUsers_path):
             print("File not found.")
             exit(1)
@@ -62,17 +62,17 @@ class Monitor():
                             params_path = os.path.join(data["basedir"], "params.json")
                             with open(params_path, 'r') as params_file:
                                 params = json.load(params_file)
-                                workspaceDict[params["params"]["FLOW_DIR"]].append(data)
+                                workspaceDict[params["params"]["FLOW_DIR"]].append(data)   # adding the json object of the run to the list of that flowdir
                         except FileNotFoundError:
                             print(f"File not found: {params_path}")
                 start_time = time.time()
                 with ThreadPoolExecutor() as executor:
-                    results = list(executor.map(lambda flow_dir: WorkSpace(self, flow_dir , workspaceDict ), workspaceDict.keys()))
-                    self.validWorkSpaces.extend(results) ##FLAG , FLOWDIR ?? 
+                    results = list(executor.map(lambda flow_dir: WorkSpace(self, flow_dir , workspaceDict ), workspaceDict.keys()))  # this is where we create the workspace objects , one for each flowdir
+                    self.validWorkSpaces.extend(results) # add all the workspace objects to the monitor object
                 print(f"\nFound {len(self.validWorkSpaces)} WorkSpaces found for user: {self.User}\n")
                 end_time = time.time()
                 elapsed_time = end_time - start_time
-                print(f"Time taken to get workspaces: {elapsed_time:.2f} seconds")
+                print(f"Time taken to get workspaces: {elapsed_time:.2f} seconds") #everything done to create workspaces and runs in the worksspace is done in the init so I'm timing the creation of all objects
 
     def WriteToJson(self):
         print("Writing to Json")
@@ -91,22 +91,22 @@ class WorkSpace():
 
         def getRuns(self, workspaceDict):
                 with ThreadPoolExecutor() as executor:
-                    jobs_submitted = [executor.submit(Run, run_dict, self) for run_dict in workspaceDict[self.FLOW_DIR]]
+                    jobs_submitted = [executor.submit(Run, run_dict, self) for run_dict in workspaceDict[self.FLOW_DIR]] # create a Run object for each run in the workspace based on how many json objects we have for that flowdir
                     return [job.result() for job in as_completed(jobs_submitted)]
 
         def printRuns(self):
             for run in self.validRuns:
-                #print(f"Run: {run.dictionary['basedir']}\n\n")
                 print(f"Run: {run.dictionary}\n\n")
 
         def getStatus(self):
 
-            run_map = {run.dictionary["basedir"].split("/")[-1]:run for run in self.validRuns if "basedir" in run.dictionary}
+            run_map = {run.dictionary["basedir"].split("/")[-1]:run for run in self.validRuns if "basedir" in run.dictionary}  # map of basedir to run object for easy access to map targets to the correct run object in seras cmd output , output looks like
+                                                                                                                             # TargetName ../../basedir , Alot faster to map the targets to runs than using the command for every run object 
                 
             if "TB_SRV_DIR" in self.validRuns[0].dictionary:
-                for status in ["RUNNING","FAILED"]:
+                for status in ["RUNNING","FAILED"]: # Sources enviornmental variables for that flowdir and spits out all jobs with that status in that workspace
                     cmd = f"""
-                    source {self.validRuns[0].dictionary['TB_SRV_DIR']}/.cshrc; 
+                    source {self.validRuns[0].dictionary['TB_SRV_DIR']}/.cshrc;   
                     serascmd -find_jobs 'status=={status} ' -report 'name dir';
                     """
                     result = subprocess.run(['tcsh', '-c', cmd], text=True, capture_output=True)
@@ -141,6 +141,10 @@ class WorkSpace():
 
             else:
                 print(f"TB_SRV_DIR not found in dictionary for: {self.dictionary['basedir']}")        
+
+         
+
+
   
 class Run():
     def __init__(self,json,workSpace):
@@ -157,44 +161,15 @@ class Run():
         try:
             params_path = os.path.join(self.dictionary["basedir"], "params.json")
             
-            with open(params_path, 'r') as params_file:
+            with open(params_path, 'r') as params_file:   # load params.json and get needed parameters 
                 params = json.load(params_file)
                 for parameter in paramsNeeded:
-                    self.dictionary[parameter] = params["params"][parameter]
+                    self.dictionary[parameter] = params["params"][parameter] # tounge twiser might change 
 
     
         except FileNotFoundError:
             print(f"File not found: {params_path}")
             self.validityFlag = False   
-
-    # def getTargets(self):
-    #     self.dictionary["RUNNING_TARGETS"] = []
-    #     self.dictionary["FAILED_TARGETS"] = []
-    #     status_flag = True
-    #     dir = self.dictionary["basedir"].split("/")[-1]
-    #     if "TB_SRV_DIR" in self.dictionary:
-    #         for status in ["RUNNING","FAILED"]:
-    #             cmd = f"""
-    #             source {self.dictionary['TB_SRV_DIR']}/.cshrc; 
-    #             serascmd -find_jobs 'status=={status} dir=~{dir}' -report 'name dir';
-    #             """
-    #             result = subprocess.run(['tcsh', '-c', cmd], text=True, capture_output=True)
-    #             for line in result.stdout.splitlines():
-    #                 if len(line.split()) == 2:
-    #                     ansi_escape = re.compile(
-    #                     r'(?:\x1B[@-_][0-?]*[ -/]*[@-~])'  # ANSI CSI sequences
-    #                     r'|(?:\x1B\][^\x07]*\x07)'         # OSC sequences
-    #                     )
-    #                     # I beleive serascmd is givng me these escape sequences that are visible when Im saving to json
-    #                     # This is only seen after json.dump() , lowkey makes me want to reformat everything and avoid json
-    #                     line = ansi_escape.sub('', line)
-    #                     if status == "RUNNING":
-    #                         self.dictionary["RUNNING_TARGETS"].append(line.split()[0])
-    #                     else:
-    #                         self.dictionary["FAILED_TARGETS"].append(line.split()[0])
-
-    #     else:
-    #         print(f"TB_SRV_DIR not found in dictionary for: {self.dictionary['basedir']}")
 
 
 
