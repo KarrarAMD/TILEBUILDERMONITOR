@@ -15,7 +15,7 @@ from collections import defaultdict
 currentUsers_path = "/tool/aticad/1.0/flow/current_users.json"
 os.makedirs("tmp_TileBuilderMonitor",exist_ok=True)
 
-paramsNeeded = ["TECHNO_NAME","FLOW_DIR","TB_SRV_DIR"]
+paramsNeeded = ["TECHNO_NAME","FLOW_DIR","TB_SRV_DIR","FC_MODULE"]
 
 Verbose = False # for ERRORS and debugging
 
@@ -35,7 +35,6 @@ class Monitor():
         self.validWorkSpaces = []
         self.validRuns = []
         self.User = self.getUser()
-        # self.getAllRuns()
         self.getWorkSpaces()
 
     def getUser(self):
@@ -68,6 +67,7 @@ class Monitor():
                 start_time = time.time()
                 with ThreadPoolExecutor() as executor:
                     results = list(executor.map(lambda flow_dir: WorkSpace(self, flow_dir , workspaceDict ), workspaceDict.keys()))  # this is where we create the workspace objects , one for each flowdir
+                    #FLAG , Maybe don't send in the whole dict , just the list of runs for that flowdir , workspaceDict[flow_dir] rather than worksapceDict 
                     self.validWorkSpaces.extend(results) # add all the workspace objects to the monitor object
                 print(f"\nFound {len(self.validWorkSpaces)} WorkSpaces found for user: {self.User}\n")
                 end_time = time.time()
@@ -81,69 +81,134 @@ class Monitor():
                 for run in workspace.validRuns:
                     if run.validityFlag:
                         file.write(json.dumps(run.dictionary, indent=4))
-
+                                   
 class WorkSpace():
-        def __init__(self, monitor, flow_dir , workspaceDict):
-             self.FLOW_DIR = flow_dir
-             self.validRuns= self.getRuns(workspaceDict)
-             self.getStatus()
-             print(f"Initialized WorkSpace for FLOW_DIR: {flow_dir}\n\n")
+    def __init__(self, monitor, flow_dir , workspaceDict):
+            self.FLOW_DIR = flow_dir
+            self.validRuns= self.getRuns(workspaceDict)
+            self.getStatus()
+            self.getQoRSummary()
+            print(f"Initialized WorkSpace for FLOW_DIR: {flow_dir}\n\n")
 
-        def getRuns(self, workspaceDict):
-                with ThreadPoolExecutor() as executor:
-                    jobs_submitted = [executor.submit(Run, run_dict, self) for run_dict in workspaceDict[self.FLOW_DIR]] # create a Run object for each run in the workspace based on how many json objects we have for that flowdir
-                    return [job.result() for job in as_completed(jobs_submitted)]
+    def getRuns(self, workspaceDict):
+            with ThreadPoolExecutor() as executor:
+                jobs_submitted = [executor.submit(Run, run_dict, self) for run_dict in workspaceDict[self.FLOW_DIR]] # create a Run object for each run in the workspace based on how many json objects we have for that flowdir
+                return [job.result() for job in as_completed(jobs_submitted)]
 
-        def printRuns(self):
-            for run in self.validRuns:
-                print(f"Run: {run.dictionary}\n\n")
+    def printRuns(self):
+        for run in self.validRuns:
+            print(f"Run: {run.dictionary}\n\n")
 
-        def getStatus(self):
+    def getStatus(self):
 
-            run_map = {run.dictionary["basedir"].split("/")[-1]:run for run in self.validRuns if "basedir" in run.dictionary}  # map of basedir to run object for easy access to map targets to the correct run object in seras cmd output , output looks like
-                                                                                                                             # TargetName ../../basedir , Alot faster to map the targets to runs than using the command for every run object 
-                
-            if "TB_SRV_DIR" in self.validRuns[0].dictionary:
-                for status in ["RUNNING","FAILED"]: # Sources enviornmental variables for that flowdir and spits out all jobs with that status in that workspace
-                    cmd = f"""
-                    source {self.validRuns[0].dictionary['TB_SRV_DIR']}/.cshrc;   
-                    serascmd -find_jobs 'status=={status} ' -report 'name dir';
-                    """
-                    result = subprocess.run(['tcsh', '-c', cmd], text=True, capture_output=True)
-                    for line in result.stdout.splitlines():
-                        parts = line.split()
-                        if len(parts) == 2:
-                            Target = parts[0]
-                            base_dir = parts[1].split("/")[-1]
+        run_map = {run.dictionary["basedir"].split("/")[-1]:run for run in self.validRuns if "basedir" in run.dictionary}  # map of basedir to run object for easy access to map targets to the correct run object in seras cmd output , output looks like
+                                                                                                                            # TargetName ../../basedir , Alot faster to map the targets to runs than using the command for every run object 
+            
+        if "TB_SRV_DIR" in self.validRuns[0].dictionary:
+            for status in ["RUNNING","FAILED"]: # Sources enviornmental variables for that flowdir and spits out all jobs with that status in that workspace
+                cmd = f"""
+                source {self.validRuns[0].dictionary['TB_SRV_DIR']}/.cshrc;   
+                serascmd -find_jobs 'status=={status} ' -report 'name dir';
+                """
+                result = subprocess.run(['tcsh', '-c', cmd], text=True, capture_output=True)
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) == 2:
+                        Target = parts[0]
+                        base_dir = parts[1].split("/")[-1]
 
-                            ansi_escape = re.compile(
-                            r'(?:\x1B[@-_][0-?]*[ -/]*[@-~])'  # ANSI CSI sequences
-                            r'|(?:\x1B\][^\x07]*\x07)'         # OSC sequences
-                            )
-                            # I beleive serascmd is givng me these escape sequences that are visible when Im saving to json
-                            # This is only seen after json.dump() , lowkey makes me want to reformat everything and avoid json
-                            Target = ansi_escape.sub('', Target)
-                            
-                            try:
-                                if status == "RUNNING":
-                                    run_map[base_dir].dictionary["RUNNING_TARGETS"].append(Target)
-                                else:
-                                    run_map[base_dir].dictionary["FAILED_TARGETS"].append(Target)
-                            except KeyError:
-                                if Verbose:
-                                    print(f"KeyError: {base_dir} not found in run_map")  # Runs that don't share the same flowdir are sometimes technically in the same workspace , for example if we use --newflow when branching 
-                                    print(f"Available keys: {list(run_map.keys())}") # these runs will show up when using seras cmd for that workspace , but we dont have them in our run_map as theya re different flowdirs so this causes a keyerror
-                                continue
+                        ansi_escape = re.compile(
+                        r'(?:\x1B[@-_][0-?]*[ -/]*[@-~])'  # ANSI CSI sequences
+                        r'|(?:\x1B\][^\x07]*\x07)'         # OSC sequences
+                        )
+                        # I beleive serascmd is givng me these escape sequences that are visible when Im saving to json
+                        # This is only seen after json.dump() , lowkey makes me want to reformat everything and avoid json
+                        Target = ansi_escape.sub('', Target)
+                        
+                        try:
+                            if status == "RUNNING":
+                                run_map[base_dir].dictionary["RUNNING_TARGETS"].append(Target)
+                            else:
+                                run_map[base_dir].dictionary["FAILED_TARGETS"].append(Target)
+                        except KeyError:
+                            if Verbose:
+                                print(f"KeyError: {base_dir} not found in run_map")  # Runs that don't share the same flowdir are sometimes technically in the same workspace , for example if we use --newflow when branching 
+                                print(f"Available keys: {list(run_map.keys())}") # these runs will show up when using seras cmd for that workspace , but we dont have them in our run_map as theya re different flowdirs so this causes a keyerror
+                            continue
 
 
-                self.validRuns = list(run_map.values())
-                return self.validRuns
+            self.validRuns = list(run_map.values())
+            return self.validRuns
 
-            else:
-                print(f"TB_SRV_DIR not found in dictionary for: {self.dictionary['basedir']}")        
+        else:
+            print(f"TB_SRV_DIR not found in dictionary for: {self.dictionary['basedir']}")
 
-         
+    def getQoRSummary(self):
+                         
+        futures = []
+        processes = []
+        
+        tile_map = defaultdict(list)  # map of tile to run object for easy access when doing qor summary
+        for run in self.validRuns:
+            tile_map[run.dictionary["tilename"]].append(run)  # assuming tilename is a key in the run dictionary
 
+        for tile in tile_map.values():
+            location_list = []
+            names_str = ""
+            fc_module = tile[0].dictionary["FC_MODULE"]
+            for run in tile:
+                output = f"tmp_TileBuilderMonitor/{tile[0].dictionary['label']}_compare_qor_{tile[0].dictionary['tilename']}"
+                full_path = os.path.abspath(os.path.join( output , 'index.html'))
+                try:
+                    if not os.path.isdir(os.path.join(os.path.abspath(run.dictionary["basedir"]), "data","PlaceQorData")):
+                        if not os.path.isdir(os.path.join(os.path.abspath(run.dictionary["basedir"]), "data","PrePlaceQorData")):
+                            if not os.path.isdir(os.path.join(os.path.abspath(run.dictionary["basedir"]), "data","SynthesizeQorData")):
+                                    print(f"Could not find QOR data for {run.dictionary['nickname']} in {run.dictionary['basedir']}")
+                                    continue
+                            else :
+                                location_list.append(os.path.join(os.path.abspath(run.dictionary["basedir"]), "data", "SynthesizeQorData"))
+                        else :
+                            location_list.append(os.path.join(os.path.abspath(run.dictionary["basedir"]), "data", "PrePlaceQorData"))
+                    else :
+                        location_list.append(os.path.join(os.path.abspath(run.dictionary["basedir"]), "data", "PlaceQorData"))
+
+                    names_str += f"{run.dictionary['nickname']} "         
+                except Exception as e:
+                    print(f"Error occurred while processing run {run.dictionary['nickname']}: {e}")
+
+                run.dictionary["link"] = f"https://logviewer-atl.amd.com{full_path}"
+            # if len(location_list) > 1:    
+            locations_str = " ".join([location for location in location_list])
+            # else :
+            #     locations_str = location_list
+            command = f'compare_qor_data -force -run_locations "{locations_str}" -run_names "{names_str}" -output {output}; exit'
+            print(f"name str: {names_str}\n")
+            print(f"location str: {locations_str}\n")  
+        #     processes.append(subprocess.Popen(["tcsh", "-c", f"module load {fc_module}; fc_shell -x '{command}'"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+        # for process in processes:
+        #     try:
+        #         stdout, stderr = process.communicate()
+        #         if process.returncode == 0:
+        #             # if Verbose:
+        #             print(f"Process completed successfully:\n{stdout}\n")
+        #         else:
+        #             print(f"Process failed with return code {process.returncode}:\n{stderr}\n")
+        #     except Exception as e:
+        #         print(f"Error occurred while waiting for process: {e}")     
+
+                     
+
+            with ProcessPoolExecutor() as executor:
+                futures.append(executor.submit(subprocess.run, ["tcsh", "-c", f"module load {fc_module}; fc_shell -x '{command}'"], text=True, capture_output=True))
+
+        for future in futures:
+            try:
+                result = future.result()
+            except Exception as e:
+                print(f"Error occurred: {e}")
+
+
+       
 
   
 class Run():
@@ -153,9 +218,9 @@ class Run():
         self.ACTIVE = False
         self.ERROR = False
         self.getParams()
-        # self.getTargets()
         self.dictionary["RUNNING_TARGETS"] = []
         self.dictionary["FAILED_TARGETS"] = []
+        self.dictionary["link"] = []
 
     def getParams(self):
         try:
