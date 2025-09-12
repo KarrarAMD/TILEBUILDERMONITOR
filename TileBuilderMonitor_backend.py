@@ -35,7 +35,9 @@ class Monitor():
         self.validWorkSpaces = []
         self.validRuns = []
         self.currentUser = self.getUser()
+        self.inputs = self.getInput()
         self.getWorkSpaces()
+
 
     @staticmethod
     def getUser():
@@ -46,6 +48,10 @@ class Monitor():
         except subprocess.CalledProcessError as e:
             print("printenv command failed:", e.stderr.strip())
             exit(1)
+
+    def getInput(self):
+        with open(f"tmp_TileBuilderMonitor/{self.currentUser}/inputs.json", 'r') as file:
+            return json.load(file)
                 
     def getWorkSpaces(self):
         print("Getting workspaces...")
@@ -87,9 +93,11 @@ class Monitor():
 class WorkSpace():
     def __init__(self, monitor, flow_dir , workspaceDict):
             self.FLOW_DIR = flow_dir
+            self.inputs = monitor.inputs
             self.validRuns= self.getRuns(workspaceDict)
             self.getStatus()
-            #self.getQoRSummary()
+            if self.inputs.get("qor", False):  # Check if 'qor' key exists and is True
+                self.getQoRSummary()
             print(f"Initialized WorkSpace for FLOW_DIR: {flow_dir}\n\n")
 
     def getRuns(self, workspaceDict):

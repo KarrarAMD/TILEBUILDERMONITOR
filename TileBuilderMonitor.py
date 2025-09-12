@@ -76,6 +76,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("-u", "--user", dest="user", help="specify the user", default=None)
     parser.add_argument("-r", "--run", dest="run_dir", help="run area/dir", default=None)
+    parser.add_argument("-q", "--qor",action="store_true", help="include QOR summary", default=False) 
     return parser.parse_args(argv)
 
 
@@ -100,7 +101,7 @@ def main():
     print(f"{args=}")
     
     try:
-        payload = {"user": args.user, "run_dir": args.run_dir}
+        payload = {"user": args.user, "run_dir": args.run_dir, "qor": args.qor}
         # Only include keys with values, or include both? Keep both keys for stability
         with inputs_file.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
