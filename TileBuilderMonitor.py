@@ -8,6 +8,8 @@ import json
 import argparse
 from pathlib import Path
 
+from TileBuilderMonitor_backend import Monitor 
+
 
 def run_backend(backend_path: Path, workdir: Path) -> int:
     # Start backend as a subprocess and stream its output
@@ -81,7 +83,7 @@ def main():
     root = Path(__file__).resolve().parent
     backend = root / "TileBuilderMonitor_backend.py"
     frontend = root / "TileBuilderMonitor_frontend.py"
-    out_dir = root / "tmp_TileBuilderMonitor"
+    out_dir = root / "tmp_TileBuilderMonitor" / Monitor.getUser()
     out_file = out_dir / "tmp.json"
     inputs_file = out_dir / "inputs.json"
 

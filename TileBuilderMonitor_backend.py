@@ -13,7 +13,7 @@ from collections import defaultdict
  
 
 currentUsers_path = "/tool/aticad/1.0/flow/current_users.json"
-os.makedirs("tmp_TileBuilderMonitor",exist_ok=True)
+
 
 paramsNeeded = ["TECHNO_NAME","FLOW_DIR","TB_SRV_DIR","FC_MODULE"]
 
@@ -34,10 +34,11 @@ class Monitor():
     def __init__(self):
         self.validWorkSpaces = []
         self.validRuns = []
-        self.User = self.getUser()
+        self.currentUser = self.getUser()
         self.getWorkSpaces()
 
-    def getUser(self):
+    @staticmethod
+    def getUser():
         try:
             result = subprocess.run(["printenv", "USER"], text=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             user = result.stdout.strip()
@@ -56,7 +57,7 @@ class Monitor():
             with open(currentUsers_path, 'r') as file: 
                 for line in file:
                     data = json.loads(line)
-                    if data["username"] == self.User:
+                    if data["username"] == self.currentUser:
                         try:
                             params_path = os.path.join(data["basedir"], "params.json")
                             with open(params_path, 'r') as params_file:
@@ -69,14 +70,15 @@ class Monitor():
                     results = list(executor.map(lambda flow_dir: WorkSpace(self, flow_dir , workspaceDict ), workspaceDict.keys()))  # this is where we create the workspace objects , one for each flowdir
                     #FLAG , Maybe don't send in the whole dict , just the list of runs for that flowdir , workspaceDict[flow_dir] rather than worksapceDict 
                     self.validWorkSpaces.extend(results) # add all the workspace objects to the monitor object
-                print(f"\nFound {len(self.validWorkSpaces)} WorkSpaces found for user: {self.User}\n")
+                print(f"\nFound {len(self.validWorkSpaces)} WorkSpaces found for user: {self.currentUser}\n")
                 end_time = time.time()
                 elapsed_time = end_time - start_time
                 print(f"Time taken to get workspaces: {elapsed_time:.2f} seconds") #everything done to create workspaces and runs in the worksspace is done in the init so I'm timing the creation of all objects
 
     def WriteToJson(self):
         print("Writing to Json")
-        with open("tmp_TileBuilderMonitor/tmp.json", 'w') as file:
+        os.makedirs(f"tmp_TileBuilderMonitor/{self.currentUser}", exist_ok=True)
+        with open(f"tmp_TileBuilderMonitor/{self.currentUser}/tmp.json", 'w') as file:
             for workspace in self.validWorkSpaces:
                 for run in workspace.validRuns:
                     if run.validityFlag:
@@ -87,7 +89,7 @@ class WorkSpace():
             self.FLOW_DIR = flow_dir
             self.validRuns= self.getRuns(workspaceDict)
             self.getStatus()
-            self.getQoRSummary()
+            #self.getQoRSummary()
             print(f"Initialized WorkSpace for FLOW_DIR: {flow_dir}\n\n")
 
     def getRuns(self, workspaceDict):
@@ -157,7 +159,7 @@ class WorkSpace():
             names_str = ""
             fc_module = tile[0].dictionary["FC_MODULE"]
             for run in tile:
-                output = f"tmp_TileBuilderMonitor/{tile[0].dictionary['label']}_compare_qor_{tile[0].dictionary['tilename']}"
+                output = f"tmp_TileBuilderMonitor/{tile[0].dictionary['label']}/{tile[0].dictionary['tilename']}"
                 full_path = os.path.abspath(os.path.join( output , 'index.html'))
                 try:
                     if not os.path.isdir(os.path.join(os.path.abspath(run.dictionary["basedir"]), "data","PlaceQorData")):
@@ -182,8 +184,7 @@ class WorkSpace():
             # else :
             #     locations_str = location_list
             command = f'compare_qor_data -force -run_locations "{locations_str}" -run_names "{names_str}" -output {output}; exit'
-            print(f"name str: {names_str}\n")
-            print(f"location str: {locations_str}\n")  
+
         #     processes.append(subprocess.Popen(["tcsh", "-c", f"module load {fc_module}; fc_shell -x '{command}'"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
         # for process in processes:
         #     try:

@@ -8,6 +8,7 @@ import shlex
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
+from TileBuilderMonitor_backend import Monitor
 
 
 class TileBuilderMonitorApp:
@@ -156,7 +157,7 @@ class TileBuilderMonitorApp:
     def _load_json_records(self):
         # Load tmp.json next to this script
         script_dir = Path(__file__).resolve().parent
-        path = script_dir / "tmp_TileBuilderMonitor/tmp.json"
+        path = script_dir / f"tmp_TileBuilderMonitor/{Monitor.getUser()}/tmp.json"
         try:
             text = path.read_text()
         except Exception as e:
