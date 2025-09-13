@@ -36,6 +36,7 @@ class Monitor():
         self.validRuns = []
         self.currentUser = self.getUser()
         self.inputs = self.getInput()
+        self.usersToMonitor , self.runsToMonitor = self.getToMonitor()
         self.getWorkSpaces()
 
 
@@ -52,6 +53,26 @@ class Monitor():
     def getInput(self):
         with open(f"tmp_TileBuilderMonitor/{self.currentUser}/inputs.json", 'r') as file:
             return json.load(file)
+
+    def getToMonitor(self):
+        users = []
+        runs = []
+        if self.inputs.get("user", None):
+            print(f"Monitoring for user: {self.inputs['user']}")
+            users = self.inputs['user'].split(",")
+        else:
+            print("Monitoring Current user Only")
+            users.append(self.currentUser)
+
+        if self.inputs.get("run_dir", None):
+            with open(self.inputs['run_dir'], 'r') as file:
+                for line in file:
+
+                    runs.append(line.strip())
+        else:
+            print("Monitoring runs for Current user")
+
+        return users , runs    
                 
     def getWorkSpaces(self):
         print("Getting workspaces...")
@@ -63,7 +84,7 @@ class Monitor():
             with open(currentUsers_path, 'r') as file: 
                 for line in file:
                     data = json.loads(line)
-                    if data["username"] == self.currentUser:
+                    if data["username"] in self.usersToMonitor or data["basedir"] in self.runsToMonitor:  # only get workspaces for users we care about
                         try:
                             params_path = os.path.join(data["basedir"], "params.json")
                             with open(params_path, 'r') as params_file:
@@ -71,6 +92,9 @@ class Monitor():
                                 workspaceDict[params["params"]["FLOW_DIR"]].append(data)   # adding the json object of the run to the list of that flowdir
                         except FileNotFoundError:
                             print(f"File not found: {params_path}")
+                        except PermissionError as e:
+                            print(f"PermissionError: {e} while accessing {params_path}")
+
                 start_time = time.time()
                 with ThreadPoolExecutor() as executor:
                     results = list(executor.map(lambda flow_dir: WorkSpace(self, flow_dir , workspaceDict ), workspaceDict.keys()))  # this is where we create the workspace objects , one for each flowdir
@@ -186,11 +210,8 @@ class WorkSpace():
                 except Exception as e:
                     print(f"Error occurred while processing run {run.dictionary['nickname']}: {e}")
 
-                run.dictionary["link"] = f"https://logviewer-atl.amd.com{full_path}"
-            # if len(location_list) > 1:    
+                run.dictionary["link"] = f"https://logviewer-atl.amd.com{full_path}"    
             locations_str = " ".join([location for location in location_list])
-            # else :
-            #     locations_str = location_list
             command = f'compare_qor_data -force -run_locations "{locations_str}" -run_names "{names_str}" -output {output}; exit'
 
         #     processes.append(subprocess.Popen(["tcsh", "-c", f"module load {fc_module}; fc_shell -x '{command}'"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
